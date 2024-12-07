@@ -20,8 +20,7 @@ class StrategyAnalysis:
     profit_factor: float
     max_consecutive_losses: int
     yearly_returns: Dict[int, float]
-    monthly_returns: Dict[str, float]
-    drawdown_periods: List[Dict]
+    significant_drawdowns: List[Dict]
 
 class BacktestAnalyzer:
     def __init__(self, risk_free_rate: float = 0.04):
@@ -35,36 +34,72 @@ class BacktestAnalyzer:
         
     def analyze_strategy(self, portfolio: pd.DataFrame, price_data: pd.DataFrame) -> StrategyAnalysis:
         """
-        Perform comprehensive analysis of a strategy
+        Analyze a trading strategy's performance
         
-        Args:
-            portfolio: Portfolio DataFrame with daily values
-            price_data: Price DataFrame with daily prices
-        
-        Returns:
-            StrategyAnalysis object with computed metrics
+        Parameters:
+        -----------
+        portfolio : pd.DataFrame
+            Portfolio data with columns: investment, btc_holdings, total_invested, portfolio_value
+        price_data : pd.DataFrame
+            Price data with daily returns
         """
         # Basic metrics
         total_invested = float(portfolio['total_invested'].iloc[-1])
         final_value = float(portfolio['portfolio_value'].iloc[-1])
-        btc_held = float(portfolio['btc_balance'].iloc[-1])
-        roi = ((final_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
+        btc_held = float(portfolio['btc_holdings'].iloc[-1])
+        roi = ((final_value - total_invested) / total_invested) * 100
         
-        # Risk metrics
-        max_drawdown = self._calculate_max_drawdown(portfolio)
-        volatility = self._calculate_volatility(portfolio)
-        sharpe = self._calculate_sharpe_ratio(portfolio)
-        sortino = self._calculate_sortino_ratio(portfolio)
+        # Calculate max drawdown
+        rolling_max = portfolio['portfolio_value'].cummax()
+        drawdown = (portfolio['portfolio_value'] - rolling_max) / rolling_max
+        max_drawdown = float(drawdown.min() * 100)
         
-        # Trading metrics
-        win_rate = self._calculate_win_rate(portfolio)
-        profit_factor = self._calculate_profit_factor(portfolio)
-        max_consecutive_losses = self._calculate_max_consecutive_losses(portfolio)
+        # Calculate volatility
+        daily_returns = portfolio['portfolio_value'].pct_change()
+        volatility = float(daily_returns.std() * np.sqrt(252) * 100)  # Annualized
         
-        # Time-based analysis
-        yearly_returns = self._calculate_yearly_returns(portfolio)
-        monthly_returns = self._calculate_monthly_returns(portfolio)
-        drawdown_periods = self._analyze_drawdown_periods(portfolio)
+        # Calculate Sharpe Ratio
+        excess_returns = daily_returns - 0.04/252  # Assuming 4% risk-free rate
+        sharpe_ratio = float(np.sqrt(252) * excess_returns.mean() / excess_returns.std())
+        
+        # Calculate Sortino Ratio
+        downside_returns = daily_returns[daily_returns < 0]
+        sortino_ratio = float(np.sqrt(252) * daily_returns.mean() / downside_returns.std())
+        
+        # Calculate Win Rate
+        win_rate = float(len(daily_returns[daily_returns > 0]) / len(daily_returns) * 100)
+        
+        # Calculate Profit Factor
+        gains = daily_returns[daily_returns > 0].sum()
+        losses = abs(daily_returns[daily_returns < 0].sum())
+        if losses == 0:
+            if gains > 0:
+                profit_factor = 100.0  # Cap it at 100 instead of infinity
+            else:
+                profit_factor = 0.0  # If no gains and no losses
+        else:
+            profit_factor = float(gains / losses)
+        
+        # Calculate Max Consecutive Losses
+        streaks = (daily_returns < 0).astype(int).groupby(
+            (daily_returns < 0).astype(int).diff().ne(0).cumsum()
+        ).sum()
+        max_consecutive_losses = int(streaks[streaks > 0].max() if len(streaks[streaks > 0]) > 0 else 0)
+        
+        # Calculate yearly returns
+        yearly_returns = {}
+        for year in portfolio.index.year.unique():
+            year_data = portfolio[portfolio.index.year == year]
+            if len(year_data) > 0:
+                start_value = year_data['portfolio_value'].iloc[0]
+                end_value = year_data['portfolio_value'].iloc[-1]
+                if start_value > 0:
+                    yearly_returns[year] = float(((end_value - start_value) / start_value) * 100)
+                else:
+                    yearly_returns[year] = 0.0
+        
+        # Calculate significant drawdown periods
+        significant_drawdowns = self._find_significant_drawdowns(portfolio, threshold=-0.1)
         
         return StrategyAnalysis(
             total_invested=total_invested,
@@ -73,44 +108,70 @@ class BacktestAnalyzer:
             roi=roi,
             max_drawdown=max_drawdown,
             volatility=volatility,
-            sharpe_ratio=sharpe,
-            sortino_ratio=sortino,
+            sharpe_ratio=sharpe_ratio,
+            sortino_ratio=sortino_ratio,
             win_rate=win_rate,
             profit_factor=profit_factor,
             max_consecutive_losses=max_consecutive_losses,
             yearly_returns=yearly_returns,
-            monthly_returns=monthly_returns,
-            drawdown_periods=drawdown_periods
+            significant_drawdowns=significant_drawdowns
         )
     
-    def compare_strategies(self, strategies: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-        """
-        Compare multiple strategies side by side
+    def compare_strategies(self, portfolios: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        """Compare multiple strategies"""
+        comparison_data = {}
         
-        Args:
-            strategies: Dictionary of strategy names and their portfolio DataFrames
-        
-        Returns:
-            DataFrame with comparison metrics
-        """
-        comparison = {}
-        
-        for name, portfolio in strategies.items():
-            analysis = self.analyze_strategy(portfolio, None)
-            comparison[name] = {
-                'Total Invested': analysis.total_invested,
-                'Final Value': analysis.final_value,
-                'BTC Held': analysis.btc_held,
-                'ROI (%)': analysis.roi,
-                'Max Drawdown (%)': analysis.max_drawdown,
-                'Volatility (%)': analysis.volatility,
-                'Sharpe Ratio': analysis.sharpe_ratio,
-                'Sortino Ratio': analysis.sortino_ratio,
-                'Win Rate (%)': analysis.win_rate,
-                'Profit Factor': analysis.profit_factor
+        for name, portfolio in portfolios.items():
+            total_invested = portfolio['total_invested'].iloc[-1]
+            final_value = portfolio['portfolio_value'].iloc[-1]
+            btc_held = portfolio['btc_holdings'].iloc[-1]
+            roi = ((final_value - total_invested) / total_invested) * 100
+            
+            # Calculate max drawdown
+            rolling_max = portfolio['portfolio_value'].cummax()
+            drawdown = (portfolio['portfolio_value'] - rolling_max) / rolling_max
+            max_drawdown = drawdown.min() * 100
+            
+            # Calculate volatility
+            daily_returns = portfolio['portfolio_value'].pct_change()
+            volatility = daily_returns.std() * np.sqrt(252) * 100  # Annualized
+            
+            # Calculate Sharpe Ratio
+            excess_returns = daily_returns - 0.04/252  # Assuming 4% risk-free rate
+            sharpe_ratio = np.sqrt(252) * excess_returns.mean() / excess_returns.std()
+            
+            # Calculate Sortino Ratio
+            downside_returns = daily_returns[daily_returns < 0]
+            sortino_ratio = np.sqrt(252) * daily_returns.mean() / downside_returns.std()
+            
+            # Calculate Win Rate
+            win_rate = len(daily_returns[daily_returns > 0]) / len(daily_returns) * 100
+            
+            # Calculate Profit Factor
+            gains = daily_returns[daily_returns > 0].sum()
+            losses = abs(daily_returns[daily_returns < 0].sum())
+            if losses == 0:
+                if gains > 0:
+                    profit_factor = 100.0  # Cap it at 100 instead of infinity
+                else:
+                    profit_factor = 0.0  # If no gains and no losses
+            else:
+                profit_factor = float(gains / losses)
+            
+            comparison_data[name] = {
+                'Total Invested': total_invested,
+                'Final Value': final_value,
+                'BTC Held': btc_held,
+                'ROI (%)': roi,
+                'Max Drawdown (%)': max_drawdown,
+                'Volatility (%)': volatility,
+                'Sharpe Ratio': sharpe_ratio,
+                'Sortino Ratio': sortino_ratio,
+                'Win Rate (%)': win_rate,
+                'Profit Factor': profit_factor
             }
         
-        return pd.DataFrame(comparison).round(2)
+        return pd.DataFrame(comparison_data)
     
     def generate_report(self, strategy_name: str, analysis: StrategyAnalysis) -> str:
         """Generate detailed text report for a strategy"""
@@ -182,155 +243,55 @@ Yearly Returns:"""
         with open(filepath, 'w') as f:
             json.dump(analysis_dict, f, indent=4)
     
-    def _calculate_max_drawdown(self, portfolio: pd.DataFrame) -> float:
-        """Calculate maximum drawdown percentage"""
+    def _find_significant_drawdowns(self, portfolio: pd.DataFrame, threshold: float = -0.1) -> List[Dict]:
+        """Find periods of significant drawdowns"""
         rolling_max = portfolio['portfolio_value'].cummax()
         drawdown = (portfolio['portfolio_value'] - rolling_max) / rolling_max
-        return float(drawdown.min() * 100)
-    
-    def _calculate_volatility(self, portfolio: pd.DataFrame) -> float:
-        """Calculate annualized volatility"""
-        daily_returns = portfolio['portfolio_value'].pct_change().dropna()
-        return float(daily_returns.std() * np.sqrt(252) * 100)
-    
-    def _calculate_sharpe_ratio(self, portfolio: pd.DataFrame) -> float:
-        """Calculate Sharpe ratio"""
-        daily_returns = portfolio['portfolio_value'].pct_change().dropna()
-        excess_returns = daily_returns - (self.risk_free_rate / 252)
-        if len(excess_returns) == 0 or excess_returns.std() == 0:
-            return 0.0
-        return float(np.sqrt(252) * (excess_returns.mean() / excess_returns.std()))
-    
-    def _calculate_sortino_ratio(self, portfolio: pd.DataFrame) -> float:
-        """Calculate Sortino ratio"""
-        daily_returns = portfolio['portfolio_value'].pct_change().dropna()
-        excess_returns = daily_returns - (self.risk_free_rate / 252)
-        downside_returns = excess_returns[excess_returns < 0]
         
-        if len(downside_returns) == 0 or downside_returns.std() == 0:
-            return float('inf')
-            
-        return float(np.sqrt(252) * (excess_returns.mean() / downside_returns.std()))
-    
-    def _calculate_win_rate(self, portfolio: pd.DataFrame) -> float:
-        """Calculate percentage of winning days"""
-        daily_returns = portfolio['portfolio_value'].pct_change().dropna()
-        winning_days = (daily_returns > 0).sum()
-        return float((winning_days / len(daily_returns)) * 100)
-    
-    def _calculate_profit_factor(self, portfolio: pd.DataFrame) -> float:
-        """Calculate profit factor (gross profits / gross losses)"""
-        daily_returns = portfolio['portfolio_value'].pct_change().dropna()
-        gross_profits = daily_returns[daily_returns > 0].sum()
-        gross_losses = abs(daily_returns[daily_returns < 0].sum())
+        # Find drawdown periods
+        is_drawdown = drawdown < threshold
+        shifted_drawdown = is_drawdown.shift(1)
+        shifted_drawdown = shifted_drawdown.convert_dtypes()
+        shifted_drawdown = shifted_drawdown.fillna(False)
         
-        if gross_losses == 0:
-            return float('inf')
-            
-        return float(gross_profits / gross_losses)
-    
-    def _calculate_max_consecutive_losses(self, portfolio: pd.DataFrame) -> int:
-        """Calculate maximum consecutive losing days"""
-        daily_returns = portfolio['portfolio_value'].pct_change().dropna()
-        losses = (daily_returns < 0).astype(int)
-        
-        max_consecutive = 0
-        current_consecutive = 0
-        
-        for loss in losses:
-            if loss:
-                current_consecutive += 1
-                max_consecutive = max(max_consecutive, current_consecutive)
-            else:
-                current_consecutive = 0
-                
-        return int(max_consecutive)
-    
-    def _calculate_yearly_returns(self, portfolio: pd.DataFrame) -> Dict[int, float]:
-        """Calculate returns for each year"""
-        yearly_returns = {}
-        
-        for year in portfolio.index.year.unique():
-            year_data = portfolio[portfolio.index.year == year]
-            start_invested = year_data['total_invested'].iloc[0]
-            end_invested = year_data['total_invested'].iloc[-1]
-            start_value = year_data['portfolio_value'].iloc[0]
-            end_value = year_data['portfolio_value'].iloc[-1]
-            
-            if start_invested == end_invested:  # No new investments in this year
-                if start_value > 0:
-                    yearly_returns[int(year)] = float(((end_value - start_value) / start_value) * 100)
-                else:
-                    yearly_returns[int(year)] = 0.0
-            else:  # New investments were made
-                investment_return = ((end_value - end_invested) / end_invested) * 100
-                yearly_returns[int(year)] = float(investment_return)
-            
-        return yearly_returns
-    
-    def _calculate_monthly_returns(self, portfolio: pd.DataFrame) -> Dict[str, float]:
-        """Calculate returns for each month"""
-        monthly_returns = {}
-        
-        for year in portfolio.index.year.unique():
-            for month in portfolio[portfolio.index.year == year].index.month.unique():
-                month_data = portfolio[
-                    (portfolio.index.year == year) & 
-                    (portfolio.index.month == month)
-                ]
-                
-                start_invested = month_data['total_invested'].iloc[0]
-                end_invested = month_data['total_invested'].iloc[-1]
-                start_value = month_data['portfolio_value'].iloc[0]
-                end_value = month_data['portfolio_value'].iloc[-1]
-                
-                month_key = f"{year}-{month:02d}"
-                
-                if start_invested == end_invested:  # No new investments in this month
-                    if start_value > 0:
-                        monthly_returns[month_key] = float(((end_value - start_value) / start_value) * 100)
-                    else:
-                        monthly_returns[month_key] = 0.0
-                else:  # New investments were made
-                    investment_return = ((end_value - end_invested) / end_invested) * 100
-                    monthly_returns[month_key] = float(investment_return)
-        
-        return monthly_returns
-    
-    def _analyze_drawdown_periods(self, portfolio: pd.DataFrame) -> List[Dict]:
-        """Analyze significant drawdown periods (>10%)"""
-        rolling_max = portfolio['portfolio_value'].cummax()
-        drawdown = (portfolio['portfolio_value'] - rolling_max) / rolling_max * 100
+        drawdown_starts = is_drawdown & ~shifted_drawdown
+        drawdown_ends = (~is_drawdown & shifted_drawdown) | (is_drawdown & (drawdown.index == drawdown.index[-1]))
         
         significant_drawdowns = []
-        in_drawdown = False
-        start_date = None
-        threshold = -10  # Only track drawdowns greater than 10%
+        current_start = None
         
-        dates = portfolio.index
-        for i, date in enumerate(dates):
-            if not in_drawdown and drawdown[date] <= threshold:
-                in_drawdown = True
-                start_date = date
-            elif in_drawdown:
-                # Check if drawdown has ended or we're at the end of the data
-                if drawdown[date] > threshold or i == len(dates) - 1:
-                    end_date = dates[i-1] if drawdown[date] > threshold else date
-                    duration = (end_date - start_date).days
-                    
-                    # Find the deepest drawdown in this period
-                    period_drawdown = drawdown[start_date:end_date]
-                    min_date = period_drawdown.idxmin()
-                    depth = drawdown[min_date]
-                    
-                    significant_drawdowns.append({
-                        'start': start_date.strftime('%Y-%m-%d'),
-                        'end': end_date.strftime('%Y-%m-%d'),
-                        'depth': float(depth),
-                        'duration': int(duration)
-                    })
-                    
-                    in_drawdown = False
-                    start_date = None
+        for date in drawdown.index:
+            # Start of a drawdown period
+            if drawdown_starts[date]:
+                current_start = date
+            # End of a drawdown period
+            elif drawdown_ends[date] and current_start is not None:
+                period_drawdown = drawdown[current_start:date]
+                max_drawdown = float(period_drawdown.min() * 100)
+                duration = (date - current_start).days
+                
+                significant_drawdowns.append({
+                    'start_date': current_start.strftime('%Y-%m-%d'),
+                    'end_date': date.strftime('%Y-%m-%d'),
+                    'max_drawdown': max_drawdown,
+                    'duration': duration
+                })
+                current_start = None
         
-        return sorted(significant_drawdowns, key=lambda x: x['depth'])
+        # Handle ongoing drawdown at the end of the data
+        if current_start is not None:
+            period_drawdown = drawdown[current_start:]
+            max_drawdown = float(period_drawdown.min() * 100)
+            duration = (drawdown.index[-1] - current_start).days
+            
+            significant_drawdowns.append({
+                'start_date': current_start.strftime('%Y-%m-%d'),
+                'end_date': drawdown.index[-1].strftime('%Y-%m-%d'),
+                'max_drawdown': max_drawdown,
+                'duration': duration
+            })
+        
+        # Sort by drawdown magnitude
+        significant_drawdowns.sort(key=lambda x: x['max_drawdown'])
+        
+        return significant_drawdowns

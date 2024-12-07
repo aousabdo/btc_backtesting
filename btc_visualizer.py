@@ -6,6 +6,7 @@ from matplotlib.dates import YearLocator, DateFormatter
 from typing import Dict, List, Tuple
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import matplotlib.dates as mdates
 
 class BacktestVisualizer:
     def __init__(self, style: str = 'default'):
@@ -18,80 +19,65 @@ class BacktestVisualizer:
         plt.style.use('default')
         sns.set_theme()
         sns.set_palette("husl")
+        self.mdates = mdates
+        plt.style.use('bmh')  # Set default style
         
-    def plot_portfolio_values(self, portfolios: Dict[str, pd.DataFrame], 
-                            save_path: str = None) -> None:
-        """
-        Plot portfolio values over time for different strategies
+    def plot_portfolio_values(self, portfolios: Dict[str, pd.DataFrame], save_path: str = None):
+        """Plot portfolio values over time"""
+        plt.figure(figsize=(12, 6))
         
-        Args:
-            portfolios: Dictionary of portfolio dataframes {strategy_name: portfolio_df}
-            save_path: Optional path to save the plot
-        """
-        plt.style.use('bmh')  # Using built-in style
-        plt.figure(figsize=(15, 8))
+        for name, portfolio in portfolios.items():
+            # Print available columns for debugging
+            print(f"Available columns in {name} portfolio:", portfolio.columns.tolist())
+            plt.plot(portfolio.index, portfolio['portfolio_value'], label=name)
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-        for i, (strategy, portfolio) in enumerate(portfolios.items()):
-            plt.plot(portfolio.index, portfolio['portfolio_value'], 
-                    label=strategy, linewidth=2, color=colors[i])
-        
-        plt.title('Portfolio Values Over Time', fontsize=16, pad=20)
-        plt.xlabel('Date', fontsize=12)
-        plt.ylabel('Portfolio Value ($)', fontsize=12)
-        plt.legend(fontsize=10, framealpha=0.8)
+        plt.title('Portfolio Values Over Time')
+        plt.xlabel('Date')
+        plt.ylabel('Portfolio Value ($)')
         plt.grid(True, alpha=0.3)
-        
-        # Format y-axis to show dollar amounts
-        plt.gca().yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-        
-        # Format x-axis to show years
-        plt.gca().xaxis.set_major_locator(YearLocator())
-        plt.gca().xaxis.set_major_formatter(DateFormatter('%Y'))
-        
-        # Add light background grid
-        plt.grid(True, linestyle='--', alpha=0.7)
-        
-        plt.tight_layout()
+        plt.legend()
+        plt.yscale('log')  # Use log scale
         
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
-        plt.show()
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            plt.close()
+        else:
+            plt.show()
 
-    def plot_btc_holdings(self, portfolios: Dict[str, pd.DataFrame], 
-                         save_path: str = None) -> None:
-        """
-        Plot BTC holdings over time for different strategies
-        """
-        plt.style.use('bmh')  # Using built-in style
-        plt.figure(figsize=(15, 8))
+    def plot_btc_holdings(self, portfolios: Dict[str, pd.DataFrame], save_path: str = None):
+        """Plot BTC holdings over time"""
+        plt.figure(figsize=(12, 6))
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-        for i, (strategy, portfolio) in enumerate(portfolios.items()):
-            plt.plot(portfolio.index, portfolio['btc_balance'], 
-                    label=strategy, linewidth=2, color=colors[i])
+        for name, portfolio in portfolios.items():
+            # Print available columns for debugging
+            print(f"Available columns in {name} portfolio:", portfolio.columns.tolist())
+            
+            # Try different possible column names
+            btc_col = None
+            possible_names = ['btc_balance', 'btc_amount', 'btc_holdings', 'btc']
+            for col in possible_names:
+                if col in portfolio.columns:
+                    btc_col = col
+                    break
+            
+            if btc_col is None:
+                print(f"Warning: No BTC holdings column found in {name} portfolio")
+                continue
+            
+            plt.plot(portfolio.index, portfolio[btc_col], label=name)
         
-        plt.title('BTC Holdings Over Time', fontsize=16, pad=20)
-        plt.xlabel('Date', fontsize=12)
-        plt.ylabel('BTC Amount', fontsize=12)
-        plt.legend(fontsize=10, framealpha=0.8)
+        plt.title('BTC Holdings Over Time')
+        plt.xlabel('Date')
+        plt.ylabel('BTC Amount')
         plt.grid(True, alpha=0.3)
-        
-        # Format y-axis to show 4 decimal places
-        plt.gca().yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda x, p: f'{x:.4f}'))
-        
-        # Add light background grid
-        plt.grid(True, linestyle='--', alpha=0.7)
-        
-        plt.tight_layout()
+        plt.legend()
+        plt.yscale('log')  # Use log scale
         
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
-        plt.show()
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            plt.close()
+        else:
+            plt.show()
 
     def plot_investment_comparison(self, portfolios: Dict[str, pd.DataFrame], 
                                  save_path: str = None) -> None:
@@ -118,45 +104,29 @@ class BacktestVisualizer:
         
         plt.show()
 
-    def plot_drawdowns(self, portfolios: Dict[str, pd.DataFrame], 
-                      save_path: str = None) -> None:
-        """
-        Plot drawdowns over time for each strategy
-        """
-        plt.style.use('bmh')  # Using built-in style
-        plt.figure(figsize=(15, 8))
+    def plot_drawdowns(self, portfolios: Dict[str, pd.DataFrame], save_path: str = None):
+        """Plot drawdowns over time"""
+        plt.figure(figsize=(12, 6))
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-        for i, (strategy, portfolio) in enumerate(portfolios.items()):
-            rolling_max = portfolio['portfolio_value'].cummax()
+        for name, portfolio in portfolios.items():
+            # Print available columns for debugging
+            print(f"Available columns in {name} portfolio:", portfolio.columns.tolist())
+            # Calculate drawdown
+            rolling_max = portfolio['portfolio_value'].expanding().max()
             drawdown = (portfolio['portfolio_value'] - rolling_max) / rolling_max * 100
-            plt.plot(portfolio.index, drawdown, 
-                    label=strategy, linewidth=2, color=colors[i])
+            plt.plot(portfolio.index, drawdown, label=name)
         
-        plt.title('Portfolio Drawdowns Over Time', fontsize=16, pad=20)
-        plt.xlabel('Date', fontsize=12)
-        plt.ylabel('Drawdown (%)', fontsize=12)
-        plt.legend(fontsize=10, framealpha=0.8)
-        
-        # Add horizontal lines for reference
-        plt.axhline(y=-10, color='yellow', linestyle='--', alpha=0.3)
-        plt.axhline(y=-20, color='orange', linestyle='--', alpha=0.3)
-        plt.axhline(y=-30, color='red', linestyle='--', alpha=0.3)
-        
-        # Add annotations
-        plt.text(portfolio.index[0], -10, '-10%', verticalalignment='bottom')
-        plt.text(portfolio.index[0], -20, '-20%', verticalalignment='bottom')
-        plt.text(portfolio.index[0], -30, '-30%', verticalalignment='bottom')
-        
-        # Add light background grid
-        plt.grid(True, linestyle='--', alpha=0.7)
-        
-        plt.tight_layout()
+        plt.title('Portfolio Drawdowns Over Time')
+        plt.xlabel('Date')
+        plt.ylabel('Drawdown (%)')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
         
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
-        plt.show()
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            plt.close()
+        else:
+            plt.show()
 
     def create_interactive_dashboard(self, portfolios: Dict[str, pd.DataFrame], 
                                   price_data: pd.DataFrame) -> None:
@@ -317,6 +287,44 @@ class BacktestVisualizer:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
         plt.show()
+
+    def plot_investment_amounts(self, portfolios: Dict[str, pd.DataFrame], save_path: str = None):
+        """Plot investment amounts over time"""
+        plt.figure(figsize=(12, 6))
+        
+        # Set up colors for each strategy
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        
+        for (name, portfolio), color in zip(portfolios.items(), colors):
+            # Calculate cumulative investment for better visualization
+            cumulative_investment = portfolio['total_invested'].rolling(window=30, min_periods=1).mean()
+            plt.plot(portfolio.index, cumulative_investment, label=name, color=color, linewidth=2)
+        
+        plt.title('Total Investment Over Time (30-day Moving Average)', fontsize=14, pad=20)
+        plt.xlabel('Date', fontsize=12)
+        plt.ylabel('Total Investment ($)', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+        plt.yscale('log')  # Use log scale
+        
+        # Format y-axis to show dollar amounts
+        plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+        
+        # Format x-axis to show dates nicely
+        plt.gca().xaxis.set_major_locator(YearLocator())
+        plt.gca().xaxis.set_major_formatter(DateFormatter('%Y'))
+        
+        # Add light background grid
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        # Adjust layout to prevent label cutoff
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            plt.close()
+        else:
+            plt.show()
 
 # Example usage:
 if __name__ == "__main__":
