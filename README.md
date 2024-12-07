@@ -31,7 +31,7 @@ A comprehensive Python framework for backtesting and analyzing different Bitcoin
 
 1. Clone the repository:
 bash
-git clone https://github.com/yourusername/btc-backtesting.git
+git clone https://github.com/aousabdo/btc-backtesting.git
 cd btc-backtesting
 ```
 
